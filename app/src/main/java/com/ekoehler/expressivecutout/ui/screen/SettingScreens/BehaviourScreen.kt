@@ -1,0 +1,356 @@
+package com.ekoehler.expressivecutout.ui.screen
+
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.foundation.layout.Row
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.core.view.HapticFeedbackConstantsCompat
+import com.ekoehler.expressivecutout.R
+import com.ekoehler.expressivecutout.data.BehaviourSettings
+import com.ekoehler.expressivecutout.data.HorizontalCutoutMode
+import com.ekoehler.expressivecutout.data.SatellitePosition
+import com.ekoehler.expressivecutout.data.SwipeDismissDirection
+import com.ekoehler.expressivecutout.data.SwipeDismissTarget
+import com.ekoehler.expressivecutout.overlay.expandedActionsExtraDp
+import com.ekoehler.expressivecutout.ui.AppViewModel
+import com.ekoehler.expressivecutout.ui.components.ExpressiveSegmentedRow
+import com.ekoehler.expressivecutout.ui.components.OptionSelectionCard
+import com.ekoehler.expressivecutout.ui.components.PageTitle
+import com.ekoehler.expressivecutout.ui.components.SelectableOption
+import kotlin.math.roundToInt
+
+/** Grouped-list item shape: large outer corners at the group ends, small between items. */
+private fun groupedShape(isFirst: Boolean, isLast: Boolean) = RoundedCornerShape(
+    topStart = if (isFirst) 32.dp else 4.dp,
+    topEnd = if (isFirst) 32.dp else 4.dp,
+    bottomStart = if (isLast) 32.dp else 4.dp,
+    bottomEnd = if (isLast) 32.dp else 4.dp,
+)
+
+/** Label shown for each landscape cutout mode in the options card. */
+private val HorizontalCutoutMode.titleRes: Int
+    get() = when (this) {
+        HorizontalCutoutMode.HIDDEN -> R.string.horizontal_cutout_hidden
+        HorizontalCutoutMode.NORMAL_ONLY -> R.string.horizontal_cutout_normal_only
+        HorizontalCutoutMode.STICK_TO_CAMERA -> R.string.horizontal_cutout_stick_to_camera
+        HorizontalCutoutMode.CENTER -> R.string.horizontal_cutout_center
+    }
+
+/** One-line explanation shown under each landscape cutout mode. */
+private val HorizontalCutoutMode.descriptionRes: Int
+    get() = when (this) {
+        HorizontalCutoutMode.HIDDEN -> R.string.horizontal_cutout_hidden_desc
+        HorizontalCutoutMode.NORMAL_ONLY -> R.string.horizontal_cutout_normal_only_desc
+        HorizontalCutoutMode.STICK_TO_CAMERA -> R.string.horizontal_cutout_stick_to_camera_desc
+        HorizontalCutoutMode.CENTER -> R.string.horizontal_cutout_center_desc
+    }
+
+@Composable
+internal fun BehaviourScreen(
+    viewModel: AppViewModel,
+    contentPadding: PaddingValues,
+    onOpenShowsWhenEmpty: () -> Unit,
+) {
+    val behaviour by viewModel.behaviour.collectAsStateWithLifecycle()
+    // The bubble is parked beside the normal cutout, so it is the notch setting of that state that
+    // rules the split out — see satelliteAllowed in IslandOverlayController, which enforces it.
+    val layout by viewModel.layout.collectAsStateWithLifecycle()
+    val splitLockedByNotch = layout.collapsed.isNotch
+    val splitIsland = behaviour.splitIslandEnabled && !splitLockedByNotch
+    var normalSeconds by remember(behaviour.normalDurationSeconds) {
+        mutableStateOf(behaviour.normalDurationSeconds.toFloat())
+    }
+    var seconds by remember(behaviour.expandedCollapseSeconds) {
+        mutableStateOf(behaviour.expandedCollapseSeconds.toFloat())
+    }
+
+    val haptics = LocalHapticFeedback.current
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(contentPadding),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        PageTitle(text = stringResource(R.string.behaviour_title))
+
+        OptionSelectionCard(
+            modifier = Modifier.padding(bottom = 8.dp),
+            title = stringResource(R.string.behaviour_horizontal_cutout),
+            options = HorizontalCutoutMode.entries.map { mode ->
+                SelectableOption(
+                    value = mode,
+                    title = stringResource(mode.titleRes),
+                    description = stringResource(mode.descriptionRes),
+                )
+            },
+            selectedValue = behaviour.horizontalCutoutMode,
+            onSelectionChange = viewModel::setHorizontalCutoutMode,
+        )
+        // Grouped list: the first item's top corners and the last item's bottom corners round.
+        SettingsToggleCard(
+            shape = groupedShape(isFirst = true, isLast = false),
+            title = stringResource(R.string.behaviour_hide_lockscreen),
+            description = stringResource(R.string.behaviour_hide_lockscreen_desc),
+            checked = behaviour.hideOnLockscreen,
+            onCheckedChange = viewModel::setHideOnLockscreen,
+        )
+        BehaviourSliderRow(
+            shape = groupedShape(isFirst = false, isLast = false),
+            label = stringResource(R.string.behaviour_normal_duration),
+            valueText = "${normalSeconds.roundToInt()} s",
+            value = normalSeconds,
+            valueRange = BehaviourSettings.MIN_NORMAL_SECONDS.toFloat()..
+                BehaviourSettings.MAX_NORMAL_SECONDS.toFloat(),
+            onValueChange = { normalSeconds = it },
+            onCommit = { viewModel.setNormalDurationSeconds(normalSeconds.roundToInt()) },
+        )
+        SettingsToggleCard(
+            shape = groupedShape(isFirst = false, isLast = false),
+            title = stringResource(R.string.behaviour_auto_collapse),
+            description = stringResource(R.string.behaviour_auto_collapse_desc),
+            checked = behaviour.expandedAutoCollapse,
+            onCheckedChange = viewModel::setExpandedAutoCollapse,
+        )
+        AnimatedVisibility(visible = behaviour.expandedAutoCollapse) {
+            BehaviourSliderRow(
+                shape = groupedShape(isFirst = false, isLast = false),
+                label = stringResource(R.string.behaviour_collapse_delay),
+                valueText = "${seconds.roundToInt()} s",
+                value = seconds,
+                valueRange = BehaviourSettings.MIN_COLLAPSE_SECONDS.toFloat()..
+                    BehaviourSettings.MAX_COLLAPSE_SECONDS.toFloat(),
+                onValueChange = { seconds = it },
+                onCommit = { viewModel.setExpandedCollapseSeconds(seconds.roundToInt()) },
+            )
+        }
+        SettingsToggleCard(
+            shape = groupedShape(isFirst = false, isLast = false),
+            title = stringResource(R.string.behaviour_disappear),
+            description = stringResource(R.string.behaviour_disappear_desc),
+            checked = behaviour.expandedDisappearOnShrink,
+            onCheckedChange = viewModel::setExpandedDisappearOnShrink,
+        )
+        SettingsToggleCard(
+            shape = groupedShape(isFirst = false, isLast = false),
+            title = stringResource(R.string.behaviour_notif_auto_expand),
+            description = stringResource(R.string.behaviour_notif_auto_expand_desc),
+            checked = behaviour.notificationsAutoExpand,
+            onCheckedChange = viewModel::setNotificationsAutoExpand,
+        )
+        SettingsToggleCard(
+            shape = groupedShape(isFirst = false, isLast = false),
+            title = stringResource(R.string.behaviour_ignore_silent_notif),
+            description = stringResource(R.string.behaviour_ignore_silent_notif_desc),
+            checked = behaviour.ignoreSilentNotifications,
+            onCheckedChange = viewModel::setIgnoreSilentNotifications,
+        )
+        SettingsToggleCard(
+            shape = groupedShape(isFirst = false, isLast = false),
+            title = stringResource(R.string.behaviour_action_buttons),
+            description = stringResource(R.string.behaviour_action_buttons_desc),
+            checked = behaviour.showActionButtons,
+            onCheckedChange = viewModel::setShowActionButtons,
+        )
+        SettingsToggleCard(
+            shape = groupedShape(isFirst = false, isLast = false),
+            title = stringResource(R.string.behaviour_shrink_swipe_up),
+            description = stringResource(R.string.behaviour_shrink_swipe_up_desc),
+            checked = behaviour.shrinkOnSwipeUp,
+            onCheckedChange = viewModel::setShrinkOnSwipeUp,
+        )
+        SettingsToggleCard(
+            shape = groupedShape(isFirst = false, isLast = false),
+            title = stringResource(R.string.behaviour_vibrateOnTap_title),
+            description = stringResource(R.string.behaviour_vibrateOnTap_desc),
+            checked = behaviour.vibrateOnTap,
+            onCheckedChange = viewModel::setVibrateOnTap
+        )
+        SettingsToggleCard(
+            shape = groupedShape(isFirst = false, isLast = false),
+            title = stringResource(R.string.behaviour_hapticsOnPop_title),
+            description = stringResource(R.string.behaviour_hapticsOnPop_desc),
+            checked = behaviour.hapticsOnPop,
+            onCheckedChange = viewModel::setHapticsOnPop,
+        )
+        // The notch hint breaks the stack in two below, so whichever card ends up last above it has
+        // to close its group — this one whenever the swipe sub-options it owns are folded away.
+        SettingsToggleCard(
+            shape = groupedShape(isFirst = false, isLast = splitLockedByNotch && !behaviour.swipeToDismiss),
+            title = stringResource(R.string.behaviour_swipe_dismiss),
+            description = stringResource(R.string.behaviour_swipe_dismiss_desc),
+            checked = behaviour.swipeToDismiss,
+            onCheckedChange = viewModel::setSwipeToDismiss,
+        )
+        AnimatedVisibility(visible = behaviour.swipeToDismiss) {
+            Column (verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                BehaviourSegmentedRow(
+                    shape = groupedShape(isFirst = false, isLast = false),
+                    label = stringResource(R.string.behaviour_swipe_direction),
+                    options = listOf(
+                        stringResource(R.string.swipe_dir_left),
+                        stringResource(R.string.swipe_dir_right),
+                        stringResource(R.string.swipe_dir_both),
+                    ),
+                    selectedIndex = behaviour.swipeDismissDirection.ordinal,
+                    onSelect = { viewModel.setSwipeDismissDirection(SwipeDismissDirection.entries[it]) },
+                )
+                BehaviourSegmentedRow(
+                    shape = groupedShape(isFirst = false, isLast = splitLockedByNotch),
+                    label = stringResource(R.string.behaviour_swipe_target),
+                    options = listOf(
+                        stringResource(R.string.swipe_target_expanded),
+                        stringResource(R.string.swipe_target_both),
+                        stringResource(R.string.swipe_target_normal),
+                    ),
+                    selectedIndex = behaviour.swipeDismissTarget.ordinal,
+                    onSelect = { viewModel.setSwipeDismissTarget(SwipeDismissTarget.entries[it]) },
+                )
+            }
+        }
+        // Says why the switch below is greyed out, which it can't say for itself.
+        AnimatedVisibility(visible = splitLockedByNotch) {
+            Text(
+                text = stringResource(R.string.behaviour_split_island_notch),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+            )
+        }
+        SettingsToggleCard(
+            shape = groupedShape(isFirst = splitLockedByNotch, isLast = false),
+            title = stringResource(R.string.behaviour_split_island),
+            description = stringResource(R.string.behaviour_split_island_desc),
+            checked = splitIsland,
+            onCheckedChange = viewModel::setSplitIslandEnabled,
+            enabled = !splitLockedByNotch,
+        )
+        AnimatedVisibility(visible = splitIsland) {
+            BehaviourSegmentedRow(
+                shape = groupedShape(isFirst = false, isLast = false),
+                label = stringResource(R.string.behaviour_satellite_position),
+                options = listOf(
+                    stringResource(R.string.satellite_position_left),
+                    stringResource(R.string.satellite_position_right),
+                ),
+                selectedIndex = behaviour.satellitePosition.ordinal,
+                onSelect = { viewModel.setSatellitePosition(SatellitePosition.entries[it]) },
+            )
+        }
+        SettingsToggleNavCard(
+            shape = groupedShape(isFirst = false, isLast = false),
+            title = stringResource(R.string.behaviour_empty_pill),
+            description = stringResource(R.string.behaviour_empty_pill_desc),
+            checked = behaviour.showsWhenEmpty,
+            onCheckedChange = viewModel::setShowsWhenEmpty,
+            onClick = {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onOpenShowsWhenEmpty()
+            }
+        )
+        SettingsToggleCard(
+            shape = groupedShape(isFirst = false, isLast = false),
+            title = stringResource(R.string.behaviour_dismissNotifs_title),
+            description = stringResource(R.string.behaviour_dismissNotifs_desc),
+            checked = behaviour.dismissNotifications,
+            onCheckedChange = viewModel::setDismissNotifications,
+        )
+        SettingsToggleCard(
+            shape = groupedShape(isFirst = false, isLast = false),
+            title = stringResource(R.string.behaviour_alertOnNotif_title),
+            description = stringResource(R.string.behaviour_alertOnNotif_desc),
+            checked = behaviour.alertOnNotification,
+            onCheckedChange = viewModel::setAlertOnNotification,
+        )
+        SettingsToggleCard(
+            shape = groupedShape(isFirst = false, isLast = true),
+            title = stringResource(R.string.behaviour_displayWhileDnd_title),
+            description = stringResource(R.string.behaviour_displayWhileDnd_desc),
+            checked = behaviour.displayWhileDnd,
+            onCheckedChange = viewModel::setDisplayWhileDnd
+        )
+    }
+}
+
+@Composable
+private fun BehaviourSegmentedRow(
+    shape: Shape,
+    label: String,
+    options: List<String>,
+    selectedIndex: Int,
+    onSelect: (Int) -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = shape,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(text = label, style = MaterialTheme.typography.titleMedium)
+            ExpressiveSegmentedRow(
+                options = options,
+                selectedIndex = selectedIndex,
+                onSelect = onSelect,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+}
+
+@Composable
+private fun BehaviourSliderRow(
+    shape: Shape,
+    label: String,
+    valueText: String,
+    value: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    step: Float = 1f,
+    onValueChange: (Float) -> Unit,
+    onCommit: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = shape,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+            AdjustableSlider(
+                label = label,
+                valueText = valueText,
+                value = value,
+                valueRange = valueRange,
+                step = step,
+                onValueChange = onValueChange,
+                onCommit = onCommit,
+            )
+        }
+    }
+}
